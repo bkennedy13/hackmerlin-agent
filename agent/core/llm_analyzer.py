@@ -4,6 +4,7 @@ import re
 import logging
 from typing import List
 import re
+from spellchecker import SpellChecker
 
 logger = logging.getLogger(__name__)
 
@@ -54,47 +55,159 @@ class LLMAnalyzer:
         return []
     
     def _extract_spelling(self, response: str) -> List[str]:
-        """Extract spelled out letters using LLM to arrange them properly."""
+        """Extract spelled out letters - fix spelling by looking for same or longer words."""
+        spell = SpellChecker()
         
-        # Method 1: Look for clear letter patterns first
-        pattern_match = re.search(r'([A-Z](?:[\s,\-]+[A-Z]){2,})', response)
-        if pattern_match:
-            letters = re.findall(r'[A-Z]', pattern_match.group(1))
+        def try_fix_spelling(word: str) -> str:
+            """Try to fix word by finding valid words of same length or longer."""
+            word_lower = word.lower()
+            
+            # If already valid, return as-is
+            if spell.known([word_lower]):
+                return word.upper()
+            
+            # Only try to fix words under 10 letters
+            if len(word) >= 10:
+                return word.upper()
+            
+            # Try adding each letter of the alphabet to see if it makes a valid word
+            alphabet = 'abcdefghijklmnopqrstuvwxyz'
+            candidates = []
+            
+            # Try inserting a letter at each position
+            for pos in range(len(word_lower) + 1):
+                for letter in alphabet:
+                    candidate = word_lower[:pos] + letter + word_lower[pos:]
+                    if spell.known([candidate]):
+                        candidates.append(candidate)
+            
+            # Try replacing each letter
+            for pos in range(len(word_lower)):
+                for letter in alphabet:
+                    if letter != word_lower[pos]:
+                        candidate = word_lower[:pos] + letter + word_lower[pos+1:]
+                        if spell.known([candidate]) and len(candidate) >= len(word_lower):
+                            candidates.append(candidate)
+            
+            # If we found valid candidates, prefer those that are longer
+            if candidates:
+                # Sort by length (descending) to prefer longer words
+                candidates.sort(key=len, reverse=True)
+                result = candidates[0].upper()
+                if result != word.upper():
+                    logger.info(f"Spelling corrected: {word.upper()} -> {result}")
+                return result
+            
+            return word.upper()
+        
+        and_pattern = re.search(r'([A-Z](?:\s*,\s*[A-Z])*)\s*,?\s*and\s+([A-Z])', response, re.IGNORECASE)
+
+        if and_pattern:
+            # Get all letters before 'and' plus the letter after 'and'
+            letters_before = re.findall(r'[A-Za-z]', and_pattern.group(1))
+            letter_after = and_pattern.group(2)
+            letters = letters_before + [letter_after]
             if len(letters) >= 3:
-                # Use LLM to arrange these letters into the most likely word
-                letters_str = ', '.join(letters)
-                prompt = f'Letters: {letters_str}\nWhat English word uses exactly these letters? Just the word:'
-                
-                try:
-                    result = self._call_ollama(prompt)
-                    word = self._clean_result(result)
-                    if word and len(word) >= 3:
-                        return [word]
-                except:
-                    pass
+                word = ''.join(letters).upper()
+                fixed_word = try_fix_spelling(word)
+                logger.info(f"Spelling extracted (with 'and'): {fixed_word}")
+                return [fixed_word]
+    
         
-        # Method 2: Fallback - just join the letters directly
-        caps_letters = re.findall(r'\b[A-Z]\b', response)
-        if len(caps_letters) >= 3:
-            word = ''.join(caps_letters)
-            return [word]
+        # Pattern 1: Letters with separators
+        patterns = [
+            r'(?:^|[^A-Za-z])([A-Z](?:\s*[-,\.]\s*[A-Z]){2,})(?:[^A-Za-z]|$)',
+            r'(?:^|\s)([A-Z](?:\s+[A-Z]){2,})(?:\s|$)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, response, re.IGNORECASE)
+            for match in matches:
+                letters = re.findall(r'[A-Za-z]', match)
+                if len(letters) >= 3:
+                    word = ''.join(letters)
+                    fixed_word = try_fix_spelling(word)
+                    logger.info(f"Spelling extracted: {fixed_word}")
+                    return [fixed_word]
+        
+        # Pattern 2: Dots
+        dots_letters = re.findall(r'([A-Z])\.{2,}', response, re.IGNORECASE)
+        if len(dots_letters) >= 3:
+            word = ''.join(dots_letters)
+            fixed_word = try_fix_spelling(word)
+            logger.info(f"Spelling extracted (dots): {fixed_word}")
+            return [fixed_word]
+        
+        # Pattern 3: Isolated single letters
+        single_letters = re.findall(r'\b[A-Z]\b', response, re.IGNORECASE)
+        if 3 <= len(single_letters) <= 10:
+            word = ''.join(single_letters)
+            fixed_word = try_fix_spelling(word)
+            logger.info(f"Spelling extracted (isolated): {fixed_word}")
+            return [fixed_word]
         
         return []
-    
+        
     def _extract_reverse(self, response: str) -> List[str]:
         """Extract and reverse backwards word."""
+        spell = SpellChecker()
+        
+        def try_fix_spelling(word: str) -> str:
+            """Try to fix word by finding valid words of same length or longer."""
+            word_lower = word.lower()
+            
+            # If already valid, return as-is
+            if spell.known([word_lower]):
+                return word.upper()
+            
+            # Only try to fix words under 10 letters
+            if len(word) >= 10:
+                return word.upper()
+            
+            # Try adding each letter of the alphabet to see if it makes a valid word
+            alphabet = 'abcdefghijklmnopqrstuvwxyz'
+            candidates = []
+            
+            # Try inserting a letter at each position
+            for pos in range(len(word_lower) + 1):
+                for letter in alphabet:
+                    candidate = word_lower[:pos] + letter + word_lower[pos:]
+                    if spell.known([candidate]):
+                        candidates.append(candidate)
+            
+            # Try replacing each letter
+            for pos in range(len(word_lower)):
+                for letter in alphabet:
+                    if letter != word_lower[pos]:
+                        candidate = word_lower[:pos] + letter + word_lower[pos+1:]
+                        if spell.known([candidate]) and len(candidate) >= len(word_lower):
+                            candidates.append(candidate)
+            
+            # If we found valid candidates, prefer those that are longer
+            if candidates:
+                candidates.sort(key=len, reverse=True)
+                result = candidates[0].upper()
+                if result != word.upper():
+                    logger.info(f"Spelling corrected: {word.upper()} -> {result}")
+                return result
+            
+            return word.upper()
         
         # Method 1: Look for exactly one all-caps word (3-15 letters)
         caps_words = re.findall(r'\b[A-Z]{3,15}\b', response)
         if len(caps_words) == 1:
             reversed_word = caps_words[0][::-1]
-            return [reversed_word]
+            fixed_word = try_fix_spelling(reversed_word)
+            logger.info(f"Reverse extracted (caps): {fixed_word}")
+            return [fixed_word]
         
         # Method 2: If response is just one word (no spaces), reverse it
         stripped = re.sub(r'[^A-Za-z]', '', response.strip())
-        if stripped and len(stripped) >= 3 and len(stripped) <= 15:
+        if stripped and 3 <= len(stripped) <= 15:
             reversed_word = stripped[::-1].upper()
-            return [reversed_word]
+            fixed_word = try_fix_spelling(reversed_word)
+            logger.info(f"Reverse extracted (stripped): {fixed_word}")
+            return [fixed_word]
         
         # Method 3: LLM fallback only if no clear single word found
         prompt = f'Text: "{response}"\nFind the backwards word and spell it forwards. Just the word:'
@@ -102,8 +215,10 @@ class LLMAnalyzer:
         try:
             result = self._call_ollama(prompt)
             word = self._clean_result(result)
-            if word and len(word) >= 3 and len(word) <= 15:
-                return [word]
+            if word and 3 <= len(word) <= 15:
+                fixed_word = try_fix_spelling(word)
+                logger.info(f"Reverse extracted (LLM): {fixed_word}")
+                return [fixed_word]
         except Exception as e:
             logger.error(f"Reverse extraction failed: {e}")
         
@@ -164,7 +279,7 @@ class LLMAnalyzer:
     def _extract_acronym(self, response: str) -> List[str]:
         """Extract first letters from lines."""
         # For poem lines starting with C-H-E-R-R-Y should return "CHERRY"
-        prompt = f'Text: "{response}"\nFirst letter of each line spells:'
+        prompt = f'Text: "{response}"\nFirst letter of each phrase spells:'
         
         try:
             result = self._call_ollama(prompt)
@@ -174,20 +289,6 @@ class LLMAnalyzer:
                 return [word]
         except Exception as e:
             logger.error(f"Acronym extraction failed: {e}")
-        return []
-    
-    def _extract_generic(self, response: str) -> List[str]:
-        """Generic extraction."""
-        prompt = f'Text: "{response}"\nMain word:'
-        
-        try:
-            result = self._call_ollama(prompt)
-            word = self._clean_result(result)
-            if word:
-                logger.info(f"Generic extracted: {word}")
-                return [word]
-        except Exception as e:
-            logger.error(f"Generic extraction failed: {e}")
         return []
     
     def _clean_result(self, text: str) -> str:
@@ -209,7 +310,9 @@ class LLMAnalyzer:
         return ""
     
     def _call_ollama(self, prompt: str) -> str:
-        """Call Ollama with minimal settings."""
+        """
+        Call Ollama with minimal settings.
+        """
         payload = {
             "model": self.model_name,
             "prompt": prompt,
@@ -225,3 +328,92 @@ class LLMAnalyzer:
             return response.json()['response']
         else:
             raise Exception(f"Ollama API failed: {response.status_code}")
+         
+    def _extract_letters(self, response: str) -> List[str]:
+        """Extract from partial letter clues using LLM for completion."""
+        from spellchecker import SpellChecker
+        spell = SpellChecker()
+        
+        # Parse the response for letter clues
+        first_letters = ""
+        last_letters = ""
+        
+        # Pattern 1: "first X letters are ABC"
+        first_match = re.search(r'first\s+\d+\s+letters?\s+(?:are|is)\s+([A-Z]{2,})', response, re.IGNORECASE)
+        if first_match:
+            first_letters = first_match.group(1).upper()
+            logger.info(f"Found first letters: {first_letters}")
+        
+        # Pattern 2: "last X letters are XYZ"
+        last_match = re.search(r'last\s+\d+\s+letters?\s+(?:are|is)\s+([A-Z]{2,})', response, re.IGNORECASE)
+        if last_match:
+            last_letters = last_match.group(1).upper()
+            logger.info(f"Found last letters: {last_letters}")
+        
+        # Pattern 3: Just letters listed
+        if not first_letters and not last_letters:
+            # Look for pattern like "S, A, F" or "S A F"
+            letter_pattern = re.findall(r'\b[A-Z]\b', response)
+            if 2 <= len(letter_pattern) <= 4:
+                partial = ''.join(letter_pattern)
+                logger.info(f"Found partial letters: {partial}")
+                first_letters = partial
+        
+        # Use LLM to complete the word if we have partial info
+        if first_letters or last_letters:
+            prompt_parts = []
+            if first_letters:
+                prompt_parts.append(f"starts with {first_letters}")
+            if last_letters:
+                prompt_parts.append(f"ends with {last_letters}")
+            
+            prompt = f"Common English word that {' and '.join(prompt_parts)}. One word:"
+            
+            try:
+                result = self._call_ollama(prompt)
+                word = self._clean_result(result)
+                
+                # Verify it matches our constraints
+                if word:
+                    word_upper = word.upper()
+                    if first_letters and not word_upper.startswith(first_letters):
+                        logger.info(f"LLM word {word_upper} doesn't match first letters {first_letters}")
+                        return []
+                    if last_letters and not word_upper.endswith(last_letters):
+                        logger.info(f"LLM word {word_upper} doesn't match last letters {last_letters}")
+                        return []
+                    
+                    # Spellcheck the result
+                    if spell.known([word.lower()]) or len(word) >= 10:
+                        logger.info(f"Letters extracted (LLM): {word_upper}")
+                        return [word_upper]
+                    else:
+                        # Try to fix spelling
+                        fixed = self._try_fix_spelling(word_upper)
+                        if fixed != word_upper:
+                            logger.info(f"Letters extracted (LLM, corrected): {fixed}")
+                            return [fixed]
+                        return [word_upper]
+            except Exception as e:
+                logger.error(f"Letters LLM extraction failed: {e}")
+        
+        return []
+
+    def _try_fix_spelling(self, word: str) -> str:
+        """Helper method for spellchecking."""
+        from spellchecker import SpellChecker
+        spell = SpellChecker()
+        
+        word_lower = word.lower()
+        if spell.known([word_lower]) or len(word) >= 10:
+            return word.upper()
+        
+        # Try adding letters
+        alphabet = 'abcdefghijklmnopqrstuvwxyz'
+        for pos in range(len(word_lower) + 1):
+            for letter in alphabet:
+                candidate = word_lower[:pos] + letter + word_lower[pos:]
+                if spell.known([candidate]):
+                    return candidate.upper()
+        
+        return word.upper()
