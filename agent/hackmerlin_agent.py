@@ -3,7 +3,6 @@ import time
 from typing import Dict, Any, List
 from agent.web_interface.merlin_interface import MerlinInterface
 from agent.strategies.strategy_manager import StrategyManager
-from agent.core.memory import Memory
 from agent.core.llm_analyzer import LLMAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -14,7 +13,6 @@ class HackMerlinAgent:
     def __init__(self, headless: bool = True, use_llm_extraction: bool = True):
         self.interface = MerlinInterface(headless=headless)
         self.strategy_manager = StrategyManager()
-        self.memory = Memory()
         self.llm_analyzer = LLMAnalyzer() if use_llm_extraction else None
         
         self.session_results = {

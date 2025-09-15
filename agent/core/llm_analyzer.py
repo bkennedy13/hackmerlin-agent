@@ -34,7 +34,7 @@ class LLMAnalyzer:
         elif strategy_used == "reverse":
             return self._extract_reverse(response)
         elif strategy_used == "letters":
-            return self._extract_letters(response)
+            return self._extract_letters_level6(response)
         elif strategy_used == "acronym":
             return self._extract_acronym(response)
         else:
@@ -202,13 +202,15 @@ class LLMAnalyzer:
     def _extract_acronym(self, response: str) -> List[str]:
         """Extract first letters from lines."""
         lines = response.strip().split(',')  # Split by commas first
-        if len(lines) < 3:
-            lines = response.strip().split('\n')  # Fall back to newlines
+        if len(lines) == 1:
+            # Find words starting with capital letters
+            capital_words = re.findall(r'\b[A-Z][a-z]*\b', response)
+            first_letters = [word[0] for word in capital_words]
         
         first_letters = []
         for line in lines:
             line = line.strip()
-            if line and not line.startswith('I '):  # Skip meta responses
+            if line:
                 # Get first alphabetic character
                 for char in line:
                     if char.isalpha():
