@@ -80,7 +80,8 @@ class HackMerlinAgent:
                 passwords = self.llm_analyzer.extract_passwords(
                         response, 
                         strategy_name,
-                        question
+                        question,
+                        level
                     )
             else:
                 passwords = []

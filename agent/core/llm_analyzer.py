@@ -5,6 +5,7 @@ import logging
 from typing import List
 import re
 from spellchecker import SpellChecker
+from agent.core.letter_clues_manager import LetterCluesManager
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +16,16 @@ class LLMAnalyzer:
         self.model_name = model_name
         self.base_url = "http://localhost:11434"
     
-    def extract_passwords(self, response: str, strategy_used: str, question_asked: str) -> List[str]:
+    def extract_passwords(self, response: str, strategy_used: str, question_asked: str, level: int = 0) -> List[str]:
         """Extract using strategy-specific ultra-simple prompts."""
+        if level >= 6 and strategy_used == "letters":
+            return self._extract_letters_level6(response, level, question_asked)
+        
+        if level >= 6 and strategy_used == "acronym":
+            result = self._extract_acronym(response)
+            if result and hasattr(self, 'letter_clues_manager'):
+                self.letter_clues_manager.add_clue(level, question_asked, f"WORD: {result[0]}")
+            return result
         
         if strategy_used == "direct":
             return self._extract_direct(response)
@@ -192,36 +201,28 @@ class LLMAnalyzer:
     
     def _extract_acronym(self, response: str) -> List[str]:
         """Extract first letters from lines."""
-        # For poem lines starting with C-H-E-R-R-Y should return "CHERRY"
-        prompt = f'Text: "{response}"\nFirst letter of each phrase spells:'
+        lines = response.strip().split(',')  # Split by commas first
+        if len(lines) < 3:
+            lines = response.strip().split('\n')  # Fall back to newlines
         
-        try:
-            result = self._call_ollama(prompt)
-            word = self._clean_result(result)
-            if word:
-                logger.info(f"Acronym extracted: {word}")
-                return [word]
-        except Exception as e:
-            logger.error(f"Acronym extraction failed: {e}")
+        first_letters = []
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith('I '):  # Skip meta responses
+                # Get first alphabetic character
+                for char in line:
+                    if char.isalpha():
+                        first_letters.append(char.upper())
+                        break
+        
+        if len(first_letters) >= 3:
+            word = ''.join(first_letters)
+            # Apply spellcheck for common mistakes like GLITER->GLITTER
+            fixed_word = self._try_fix_spelling_common(word)
+            logger.info(f"Acronym extracted: {fixed_word}")
+            return [fixed_word]
+        
         return []
-    
-    def _clean_result(self, text: str) -> str:
-        """Extract clean word from response."""
-
-        if not text:
-            return ""
-        
-        # Just get the first word that looks like a password
-        words = re.findall(r'\b[A-Z]{3,15}\b', text.upper())
-        if words:
-            return words[0]
-        
-        # Fallback: any word
-        words = re.findall(r'\b[A-Za-z]{3,15}\b', text)
-        if words:
-            return words[0].upper()
-        
-        return ""
     
     def _call_ollama(self, prompt: str) -> str:
         """
@@ -242,76 +243,6 @@ class LLMAnalyzer:
             return response.json()['response']
         else:
             raise Exception(f"Ollama API failed: {response.status_code}")
-         
-    def _extract_letters(self, response: str) -> List[str]:
-        """Extract from partial letter clues using LLM for completion."""
-        from spellchecker import SpellChecker
-        spell = SpellChecker()
-        
-        # Parse the response for letter clues
-        first_letters = ""
-        last_letters = ""
-        
-        # Pattern 1: "first X letters are ABC"
-        first_match = re.search(r'first\s+\d+\s+letters?\s+(?:are|is)\s+([A-Z]{2,})', response, re.IGNORECASE)
-        if first_match:
-            first_letters = first_match.group(1).upper()
-            logger.info(f"Found first letters: {first_letters}")
-        
-        # Pattern 2: "last X letters are XYZ"
-        last_match = re.search(r'last\s+\d+\s+letters?\s+(?:are|is)\s+([A-Z]{2,})', response, re.IGNORECASE)
-        if last_match:
-            last_letters = last_match.group(1).upper()
-            logger.info(f"Found last letters: {last_letters}")
-        
-        # Pattern 3: Just letters listed
-        if not first_letters and not last_letters:
-            # Look for pattern like "S, A, F" or "S A F"
-            letter_pattern = re.findall(r'\b[A-Z]\b', response)
-            if 2 <= len(letter_pattern) <= 4:
-                partial = ''.join(letter_pattern)
-                logger.info(f"Found partial letters: {partial}")
-                first_letters = partial
-        
-        # Use LLM to complete the word if we have partial info
-        if first_letters or last_letters:
-            prompt_parts = []
-            if first_letters:
-                prompt_parts.append(f"starts with {first_letters}")
-            if last_letters:
-                prompt_parts.append(f"ends with {last_letters}")
-            
-            prompt = f"Common English word that {' and '.join(prompt_parts)}. One word:"
-            
-            try:
-                result = self._call_ollama(prompt)
-                word = self._clean_result(result)
-                
-                # Verify it matches our constraints
-                if word:
-                    word_upper = word.upper()
-                    if first_letters and not word_upper.startswith(first_letters):
-                        logger.info(f"LLM word {word_upper} doesn't match first letters {first_letters}")
-                        return []
-                    if last_letters and not word_upper.endswith(last_letters):
-                        logger.info(f"LLM word {word_upper} doesn't match last letters {last_letters}")
-                        return []
-                    
-                    # Spellcheck the result
-                    if spell.known([word.lower()]) or len(word) >= 10:
-                        logger.info(f"Letters extracted (LLM): {word_upper}")
-                        return [word_upper]
-                    else:
-                        # Try to fix spelling
-                        fixed = self._try_fix_spelling(word_upper)
-                        if fixed != word_upper:
-                            logger.info(f"Letters extracted (LLM, corrected): {fixed}")
-                            return [fixed]
-                        return [word_upper]
-            except Exception as e:
-                logger.error(f"Letters LLM extraction failed: {e}")
-        
-        return []
 
     def _try_fix_spelling_common(self, word: str) -> str:
         """Try to fix word by finding valid COMMON words of same length or longer."""
@@ -365,3 +296,24 @@ class LLMAnalyzer:
         
         # No common word found, return original
         return word.upper()
+    
+    def _extract_letters_level6(self, response: str, level: int, question: str) -> List[str]:
+        """Special extraction for level 6+ that uses context accumulation."""
+        
+        # Initialize manager if not exists
+        if not hasattr(self, 'letter_clues_manager'):
+            self.letter_clues_manager = LetterCluesManager()
+        
+        # Store this clue
+        self.letter_clues_manager.add_clue(level, question, response)
+        
+        # Try to analyze accumulated clues
+        candidates = self.letter_clues_manager.analyze_clues(level, self)
+        
+        if candidates:
+            logger.info(f"Level 6+ candidates from accumulated clues: {candidates}")
+            return candidates
+        
+        # If not enough clues yet, return empty (need more data)
+        logger.info("Not enough clues yet for level 6+ analysis")
+        return []
