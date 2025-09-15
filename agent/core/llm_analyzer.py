@@ -32,11 +32,13 @@ class LLMAnalyzer:
     
     def _extract_direct(self, response: str) -> List[str]:
         """Extract direct password mention."""
-        stripped = response.strip()
-        # Check if it's a single word (no spaces) and all caps
-        if ' ' not in stripped and stripped.isupper() and stripped.isalpha():
-            logger.info(f"Direct extracted (all caps single word): {stripped}")
-            return [stripped]
+        # Find all words that are all caps and 3+ letters
+        caps_words = re.findall(r'\b[A-Z]{3,15}\b', response)
+        
+        # If exactly one all-caps word, return it
+        if len(caps_words) == 1:
+            logger.info(f"Direct extracted (single caps word): {caps_words[0]}")
+            return [caps_words[0]]
         
         # Otherwise, proceed with LLM
         prompt = f'Text: "{response}"\nFind the password word. Just the word:'
@@ -52,126 +54,63 @@ class LLMAnalyzer:
         return []
     
     def _extract_spelling(self, response: str) -> List[str]:
-        """Extract spelled out letters using regex first, LLM as fallback."""
+        """Extract spelled out letters using LLM to arrange them properly."""
         
-        # Method 1: Direct regex patterns for common spelling formats
-        patterns_to_try = [
-            # "C - A - R - P - E - T" or "C-A-R-P-E-T"
-            r'\b([A-Z]\s*-\s*[A-Z](?:\s*-\s*[A-Z])*)\b',
-            # "C A R P E T" (space separated)
-            r'\b([A-Z](?:\s+[A-Z]){2,})\b',
-            # "C, A, R, P, E, T" (comma separated)
-            r'\b([A-Z](?:,\s*[A-Z]){2,})\b',
-            # "The letters are: C, A, R, P, E, T" (with prefix)
-            r'letters?\s*(?:are|is)?:?\s*([A-Z](?:[\s,-]+[A-Z])+)',
-            # "made up of the letters C, A, R, P, E, T"
-            r'letters?\s+([A-Z](?:[\s,-]+[A-Z])+)',
-        ]
+        # Method 1: Look for clear letter patterns first
+        pattern_match = re.search(r'([A-Z](?:[\s,\-]+[A-Z]){2,})', response)
+        if pattern_match:
+            letters = re.findall(r'[A-Z]', pattern_match.group(1))
+            if len(letters) >= 3:
+                # Use LLM to arrange these letters into the most likely word
+                letters_str = ', '.join(letters)
+                prompt = f'Letters: {letters_str}\nWhat English word uses exactly these letters? Just the word:'
+                
+                try:
+                    result = self._call_ollama(prompt)
+                    word = self._clean_result(result)
+                    if word and len(word) >= 3:
+                        return [word]
+                except:
+                    pass
         
-        for pattern in patterns_to_try:
-            matches = re.findall(pattern, response, re.IGNORECASE)
-            for match in matches:
-                # Extract just the letters
-                letters = re.findall(r'[A-Za-z]', match)
-                if len(letters) >= 3:  # Must be at least 3 letters
-                    word = ''.join(letters).upper()
-                    logger.info(f"Spelling extracted (regex): {word}")
-                    return [word]
-        
-        # Method 2: If no clear pattern, try a more targeted LLM prompt
-        # But first check if response contains individual letters at all
-        single_letters = re.findall(r'\b[A-Z]\b', response.upper())
-        if len(single_letters) >= 3:
-            # Found individual letters, combine them
-            word = ''.join(single_letters)
-            logger.info(f"Spelling extracted (single letters): {word}")
+        # Method 2: Fallback - just join the letters directly
+        caps_letters = re.findall(r'\b[A-Z]\b', response)
+        if len(caps_letters) >= 3:
+            word = ''.join(caps_letters)
             return [word]
         
-        # Method 3: LLM fallback with better prompt
-        if any(keyword in response.lower() for keyword in ['letter', 'spell', 'each']):
-            prompt = f'''Response: "{response}"
-
-    This response contains letters that spell a word. Extract ONLY the letters mentioned and combine them into one word.
-
-    For example:
-    - "C - A - R - P - E - T" becomes "CARPET"
-    - "The letters are A, B, C" becomes "ABC"
-
-    Word:'''
-            
-            try:
-                result = self._call_ollama(prompt)
-                # Clean the result more strictly
-                word = self._clean_spelling_result(result, response)
-                if word:
-                    logger.info(f"Spelling extracted (LLM): {word}")
-                    return [word]
-            except Exception as e:
-                logger.error(f"Spelling extraction LLM failed: {e}")
-        
-        logger.warning("No spelling pattern found")
         return []
-
-    def _clean_spelling_result(self, llm_result: str, original_response: str) -> str:
-        """Clean LLM result for spelling extraction, ensuring it uses the original letters."""
-        print(f"LLM result: {llm_result}")
-        
-        # Extract the word from LLM result
-        words = re.findall(r'\b[A-Z]{3,15}\b', llm_result.upper())
-        if not words:
-            words = re.findall(r'\b[A-Za-z]{3,15}\b', llm_result)
-            words = [w.upper() for w in words]
-        
-        if not words:
-            return ""
-        
-        candidate = words[0]
-        
-        # Verify the candidate uses letters from the original response
-        original_letters = re.findall(r'\b[A-Z]\b', original_response.upper())
-        if len(original_letters) >= 3:
-            # Check if candidate could be formed from original letters
-            from collections import Counter
-            original_count = Counter(original_letters)
-            candidate_count = Counter(candidate)
-            
-            # If candidate uses letters not in original, or too many of a letter, reject it
-            for letter, count in candidate_count.items():
-                if original_count[letter] < count:
-                    # Candidate uses letters not available, fall back to direct join
-                    fallback = ''.join(original_letters)
-                    logger.info(f"LLM result '{candidate}' invalid, using direct join: '{fallback}'")
-                    return fallback
-        
-        return candidate
     
     def _extract_reverse(self, response: str) -> List[str]:
         """Extract and reverse backwards word."""
-        # For "YRREHC" should return "CHERRY"
         
-        # If the response is a single word (no spaces), reverse it manually
-        stripped = response.strip()
-        if ' ' not in stripped and stripped:
-            reversed_word = stripped[::-1].upper()
-            logger.info(f"Reverse extracted manually: {reversed_word}")
+        # Method 1: Look for exactly one all-caps word (3-15 letters)
+        caps_words = re.findall(r'\b[A-Z]{3,15}\b', response)
+        if len(caps_words) == 1:
+            reversed_word = caps_words[0][::-1]
             return [reversed_word]
         
-        # Otherwise, use LLM
+        # Method 2: If response is just one word (no spaces), reverse it
+        stripped = re.sub(r'[^A-Za-z]', '', response.strip())
+        if stripped and len(stripped) >= 3 and len(stripped) <= 15:
+            reversed_word = stripped[::-1].upper()
+            return [reversed_word]
+        
+        # Method 3: LLM fallback only if no clear single word found
         prompt = f'Text: "{response}"\nFind the backwards word and spell it forwards. Just the word:'
         
         try:
             result = self._call_ollama(prompt)
             word = self._clean_result(result)
-            if word:
-                logger.info(f"Reverse extracted: {word}")
+            if word and len(word) >= 3 and len(word) <= 15:
                 return [word]
         except Exception as e:
             logger.error(f"Reverse extraction failed: {e}")
+        
         return []
     
     def _clean_result(self, text: str) -> str:
         """Extract a clean candidate from an LLM reply without latching onto THE/KEY/etc."""
-        print(text)
 
         if not text:
             return ""
@@ -253,7 +192,7 @@ class LLMAnalyzer:
     
     def _clean_result(self, text: str) -> str:
         """Extract clean word from response."""
-        print(text)
+
         if not text:
             return ""
         

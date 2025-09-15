@@ -10,7 +10,7 @@ def test_clean_agent():
     agent = HackMerlinAgent(headless=True, use_llm_extraction=True)
     
     try:
-        results = agent.play_game(max_levels=4)
+        results = agent.play_game(max_levels=6)
         agent.print_summary()
         
         print(f"\nResults: {results}")

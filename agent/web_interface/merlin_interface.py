@@ -46,9 +46,6 @@ class MerlinInterface:
         # Refresh to start clean
         self.driver.refresh()
         
-        # Wait for React app to load - use specific selectors that work
-        logger.info("Waiting for React app to load...")
-        
         try:
             # Wait for the textarea with the exact placeholder
             WebDriverWait(self.driver, 20).until(
@@ -62,8 +59,7 @@ class MerlinInterface:
             
             # Additional wait for React state updates
             time.sleep(3)
-            
-            logger.info("React app loaded successfully")
+
             self._update_level()
             
         except Exception as e:
@@ -73,9 +69,7 @@ class MerlinInterface:
     
     def send_message(self, message: str) -> str:
         """Send message using Enter key with proper response detection."""
-        try:
-            logger.info(f"Sending message: {message[:50]}...")
-            
+        try:            
             # Find the textarea with the specific placeholder
             textarea = WebDriverWait(self.driver, 15).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "textarea[placeholder*='talk to merlin']"))
@@ -100,7 +94,7 @@ class MerlinInterface:
             
             # Wait for response to change using the working logic
             response = self._wait_for_response_change(old_response)
-            logger.info(f"Received response: {response[:300]}...")
+            logger.info(f"Received response: {response}")
             
             return response
             
@@ -232,7 +226,6 @@ class MerlinInterface:
                 match = re.search(r'Level (\d+)', text)
                 if match:
                     self.current_level = int(match.group(1))
-                    logger.info(f"Current level detected: {self.current_level}")
                     return
             
             logger.warning("Could not detect current level, defaulting to 1")
@@ -244,11 +237,9 @@ class MerlinInterface:
     
     def _handle_popup(self):
         """Handle popups/modals by pressing Enter key - from working version."""
-        try:
-            logger.info("Handling level transition with Enter key...")
-            
+        try:            
             # Wait a moment for any popup to appear
-            time.sleep(2)
+            time.sleep(1)
             
             # Press Enter key to dismiss any modal/popup
             self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ENTER)
@@ -259,8 +250,7 @@ class MerlinInterface:
             # Press Enter again if needed (sometimes takes two)
             self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ENTER)
             
-            logger.info("Pressed Enter to handle transition")
-            time.sleep(2)  # Wait for interface to be ready
+            time.sleep(1)  # Wait for interface to be ready
             
             return True
             

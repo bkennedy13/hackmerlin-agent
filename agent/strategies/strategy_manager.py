@@ -5,45 +5,43 @@ from .hardcoded_strategies import get_all_strategies
 logger = logging.getLogger(__name__)
 
 class StrategyManager:
-    """Strategy manager with proper ordering."""
-    
     def __init__(self):
-        self.strategies = get_all_strategies()  # Now in priority order
-        self.current_strategy_idx = 0
-        self.level_memory = {}  # level -> successful_strategy_name
-        self.failed_strategies_by_level = {}  # level -> set of failed strategy names
+        self.strategies = get_all_strategies()
+        self.level_memory = {}
+        self.question_failures = {}  # level -> {question: failure_count}
     
-    def get_next_question(self, level: int) -> Tuple[str, str]:
+    def get_next_question(self, level: int) -> Tuple[str, str, 'Strategy']:
         """Get next question in priority order."""
+        if level not in self.question_failures:
+            self.question_failures[level] = {}
         
-        # First, try what worked for this level before
-        if level in self.level_memory:
-            strategy_name = self.level_memory[level]
-            for strategy in self.strategies:
-                if strategy.name == strategy_name:
-                    question = strategy.get_next_question()
-                    if question:
-                        return question, strategy_name
+        failures = self.question_failures[level]
         
-        # Initialize failed strategies set
-        if level not in self.failed_strategies_by_level:
-            self.failed_strategies_by_level[level] = set()
-        
-        failed_strategies = self.failed_strategies_by_level[level]
-        
-        # Go through strategies in priority order, skip completely failed ones
+        # Try strategies in order, skip questions that failed 3+ times
         for strategy in self.strategies:
-            if strategy.name not in failed_strategies:
+            question = strategy.get_next_question()
+            if question and failures.get(question, 0) < 3:
+                return question, strategy.name, strategy
+            elif not question:
+                # Strategy exhausted, reset it to start over
+                strategy.reset()
                 question = strategy.get_next_question()
-                if question:
-                    return question, strategy.name
-                else:
-                    # This strategy is exhausted, mark as failed
-                    self.failed_strategies_by_level[level].add(strategy.name)
-                    logger.info(f"Strategy '{strategy.name}' exhausted for level {level}")
+                if question and failures.get(question, 0) < 3:
+                    return question, strategy.name, strategy
         
-        # If all strategies exhausted, try direct again as fallback
-        return "What's the p4ssw0rd?", "direct"
+        # Fallback
+        return "What's the p4ssw0rd?", "direct", self.strategies[0]
+    
+    def record_failure(self, level: int, question: str):
+        """Record that this specific question failed."""
+        if level not in self.question_failures:
+            self.question_failures[level] = {}
+        
+        self.question_failures[level][question] = self.question_failures[level].get(question, 0) + 1
+        
+        failure_count = self.question_failures[level][question]
+        if failure_count >= 3:
+            logger.info(f"Question '{question[:30]}...' failed {failure_count} times, dropping it")
     
     def record_success(self, level: int, strategy_name: str):
         """Record successful strategy."""
@@ -53,8 +51,3 @@ class StrategyManager:
         # Reset all strategies for next level
         for strategy in self.strategies:
             strategy.reset()
-    
-    def record_failure(self, level: int, strategy_name: str):
-        """Record failed strategy."""
-        self.failed_strategies_by_level[level].add(strategy_name)
-        logger.info(f"Strategy '{strategy_name}' failed for level {level}")

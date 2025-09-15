@@ -54,11 +54,11 @@ class HackMerlinAgent:
         logger.info(f"=== Attempting Level {level} ===")
         
         attempts = 0
-        max_attempts = 10
+        max_attempts = 15
         
         while attempts < max_attempts:
             # Get next strategy and question
-            question, strategy_name = self.strategy_manager.get_next_question(level)
+            question, strategy_name, strategy_obj = self.strategy_manager.get_next_question(level)
             logger.info(f"Strategy '{strategy_name}': {question}")
             
             # Send question and get response
@@ -67,11 +67,13 @@ class HackMerlinAgent:
                 attempts += 1
                 continue
             
-            # Check for deflection - but don't change strategy yet!
+            # Check for deflection
             if self.is_deflection(response):
-                logger.info(f"Deflection detected: '{response[:50]}...'. Continuing with current strategy.")
+                logger.info(f"Deflection detected")
+                # Record this specific question as failed
+                self.strategy_manager.record_failure(level, question)
                 attempts += 1
-                continue  # Try next question in same strategy
+                continue
             
             # Extract passwords (only if not deflected)
             if self.llm_analyzer:
@@ -83,18 +85,16 @@ class HackMerlinAgent:
             else:
                 passwords = []
             
-            logger.info(f"Password candidates: {passwords}")
+            if passwords:
+                logger.info(f"Trying: {passwords[0]}")
             
             # Try passwords
             for password in passwords[:1]:
-                if self.interface.submit_password(password):
-                    logger.info(f"SUCCESS! Password '{password}' worked")
-                    
-                    # Record success
-                    self.strategy_manager.record_success(level, strategy_name)
-                    self.memory.record_success(level, strategy_name, question, response, password)
-                    
+                if self.interface.submit_password(password):                    
                     return True
+                else:
+                    # Password failed, record this question as failed
+                    self.strategy_manager.record_failure(level, question)
             
             attempts += 1
         
@@ -110,11 +110,14 @@ class HackMerlinAgent:
             "cannot comply",
             "cannot tell",
             "must remain hidden",
+            "shall remain hidden",
             "forbidden to",
             "not allowed to",
             "unable to",
             "will not",
-            "refuse to"
+            "refuse to",
+            "not be spoken",
+            "known only to those"
         ]
         
         response_lower = response.lower()
