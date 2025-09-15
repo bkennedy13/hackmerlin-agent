@@ -117,7 +117,9 @@ class HackMerlinAgent:
             "will not",
             "refuse to",
             "not be spoken",
-            "known only to those"
+            "known only to those",
+            "not be revealed",
+            "fulfill that request"
         ]
         
         response_lower = response.lower()

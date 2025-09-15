@@ -55,51 +55,7 @@ class LLMAnalyzer:
         return []
     
     def _extract_spelling(self, response: str) -> List[str]:
-        """Extract spelled out letters - fix spelling by looking for same or longer words."""
-        spell = SpellChecker()
-        
-        def try_fix_spelling(word: str) -> str:
-            """Try to fix word by finding valid words of same length or longer."""
-            word_lower = word.lower()
-            
-            # If already valid, return as-is
-            if spell.known([word_lower]):
-                return word.upper()
-            
-            # Only try to fix words under 10 letters
-            if len(word) >= 10:
-                return word.upper()
-            
-            # Try adding each letter of the alphabet to see if it makes a valid word
-            alphabet = 'abcdefghijklmnopqrstuvwxyz'
-            candidates = []
-            
-            # Try inserting a letter at each position
-            for pos in range(len(word_lower) + 1):
-                for letter in alphabet:
-                    candidate = word_lower[:pos] + letter + word_lower[pos:]
-                    if spell.known([candidate]):
-                        candidates.append(candidate)
-            
-            # Try replacing each letter
-            for pos in range(len(word_lower)):
-                for letter in alphabet:
-                    if letter != word_lower[pos]:
-                        candidate = word_lower[:pos] + letter + word_lower[pos+1:]
-                        if spell.known([candidate]) and len(candidate) >= len(word_lower):
-                            candidates.append(candidate)
-            
-            # If we found valid candidates, prefer those that are longer
-            if candidates:
-                # Sort by length (descending) to prefer longer words
-                candidates.sort(key=len, reverse=True)
-                result = candidates[0].upper()
-                if result != word.upper():
-                    logger.info(f"Spelling corrected: {word.upper()} -> {result}")
-                return result
-            
-            return word.upper()
-        
+        """Extract spelled out letters - fix spelling by looking for same or longer words."""        
         and_pattern = re.search(r'([A-Z](?:\s*,\s*[A-Z])*)\s*,?\s*and\s+([A-Z])', response, re.IGNORECASE)
 
         if and_pattern:
@@ -109,7 +65,7 @@ class LLMAnalyzer:
             letters = letters_before + [letter_after]
             if len(letters) >= 3:
                 word = ''.join(letters).upper()
-                fixed_word = try_fix_spelling(word)
+                fixed_word = self._try_fix_spelling_common(word)
                 logger.info(f"Spelling extracted (with 'and'): {fixed_word}")
                 return [fixed_word]
     
@@ -126,7 +82,7 @@ class LLMAnalyzer:
                 letters = re.findall(r'[A-Za-z]', match)
                 if len(letters) >= 3:
                     word = ''.join(letters)
-                    fixed_word = try_fix_spelling(word)
+                    fixed_word = self._try_fix_spelling_common(word)
                     logger.info(f"Spelling extracted: {fixed_word}")
                     return [fixed_word]
         
@@ -134,7 +90,7 @@ class LLMAnalyzer:
         dots_letters = re.findall(r'([A-Z])\.{2,}', response, re.IGNORECASE)
         if len(dots_letters) >= 3:
             word = ''.join(dots_letters)
-            fixed_word = try_fix_spelling(word)
+            fixed_word = self._try_fix_spelling_common(word)
             logger.info(f"Spelling extracted (dots): {fixed_word}")
             return [fixed_word]
         
@@ -142,7 +98,7 @@ class LLMAnalyzer:
         single_letters = re.findall(r'\b[A-Z]\b', response, re.IGNORECASE)
         if 3 <= len(single_letters) <= 10:
             word = ''.join(single_letters)
-            fixed_word = try_fix_spelling(word)
+            fixed_word = self._try_fix_spelling_common(word)
             logger.info(f"Spelling extracted (isolated): {fixed_word}")
             return [fixed_word]
         
@@ -150,54 +106,12 @@ class LLMAnalyzer:
         
     def _extract_reverse(self, response: str) -> List[str]:
         """Extract and reverse backwards word."""
-        spell = SpellChecker()
-        
-        def try_fix_spelling(word: str) -> str:
-            """Try to fix word by finding valid words of same length or longer."""
-            word_lower = word.lower()
-            
-            # If already valid, return as-is
-            if spell.known([word_lower]):
-                return word.upper()
-            
-            # Only try to fix words under 10 letters
-            if len(word) >= 10:
-                return word.upper()
-            
-            # Try adding each letter of the alphabet to see if it makes a valid word
-            alphabet = 'abcdefghijklmnopqrstuvwxyz'
-            candidates = []
-            
-            # Try inserting a letter at each position
-            for pos in range(len(word_lower) + 1):
-                for letter in alphabet:
-                    candidate = word_lower[:pos] + letter + word_lower[pos:]
-                    if spell.known([candidate]):
-                        candidates.append(candidate)
-            
-            # Try replacing each letter
-            for pos in range(len(word_lower)):
-                for letter in alphabet:
-                    if letter != word_lower[pos]:
-                        candidate = word_lower[:pos] + letter + word_lower[pos+1:]
-                        if spell.known([candidate]) and len(candidate) >= len(word_lower):
-                            candidates.append(candidate)
-            
-            # If we found valid candidates, prefer those that are longer
-            if candidates:
-                candidates.sort(key=len, reverse=True)
-                result = candidates[0].upper()
-                if result != word.upper():
-                    logger.info(f"Spelling corrected: {word.upper()} -> {result}")
-                return result
-            
-            return word.upper()
         
         # Method 1: Look for exactly one all-caps word (3-15 letters)
         caps_words = re.findall(r'\b[A-Z]{3,15}\b', response)
         if len(caps_words) == 1:
             reversed_word = caps_words[0][::-1]
-            fixed_word = try_fix_spelling(reversed_word)
+            fixed_word = self._try_fix_spelling_common(reversed_word)
             logger.info(f"Reverse extracted (caps): {fixed_word}")
             return [fixed_word]
         
@@ -205,7 +119,7 @@ class LLMAnalyzer:
         stripped = re.sub(r'[^A-Za-z]', '', response.strip())
         if stripped and 3 <= len(stripped) <= 15:
             reversed_word = stripped[::-1].upper()
-            fixed_word = try_fix_spelling(reversed_word)
+            fixed_word = self._try_fix_spelling_common(reversed_word)
             logger.info(f"Reverse extracted (stripped): {fixed_word}")
             return [fixed_word]
         
@@ -216,7 +130,7 @@ class LLMAnalyzer:
             result = self._call_ollama(prompt)
             word = self._clean_result(result)
             if word and 3 <= len(word) <= 15:
-                fixed_word = try_fix_spelling(word)
+                fixed_word = self._try_fix_spelling_common(word)
                 logger.info(f"Reverse extracted (LLM): {fixed_word}")
                 return [fixed_word]
         except Exception as e:
@@ -399,21 +313,55 @@ class LLMAnalyzer:
         
         return []
 
-    def _try_fix_spelling(self, word: str) -> str:
-        """Helper method for spellchecking."""
+    def _try_fix_spelling_common(self, word: str) -> str:
+        """Try to fix word by finding valid COMMON words of same length or longer."""
         from spellchecker import SpellChecker
         spell = SpellChecker()
         
         word_lower = word.lower()
-        if spell.known([word_lower]) or len(word) >= 10:
+        
+        # If already valid AND common, return as-is
+        if spell.known([word_lower]):
+            # Check if it's a common word (high frequency)
+            word_freq = spell.word_frequency[word_lower]
+            if word_freq > 1e-6:  # Threshold for common words
+                return word.upper()
+        
+        # Only try to fix words under 10 letters
+        if len(word) >= 10:
             return word.upper()
         
-        # Try adding letters
+        # Try adding each letter of the alphabet to see if it makes a valid word
         alphabet = 'abcdefghijklmnopqrstuvwxyz'
+        candidates = []
+        
+        # Try inserting a letter at each position
         for pos in range(len(word_lower) + 1):
             for letter in alphabet:
                 candidate = word_lower[:pos] + letter + word_lower[pos:]
                 if spell.known([candidate]):
-                    return candidate.upper()
+                    # Check frequency
+                    if spell.word_frequency[candidate] > 1e-6:
+                        candidates.append(candidate)
         
+        # Try replacing each letter
+        for pos in range(len(word_lower)):
+            for letter in alphabet:
+                if letter != word_lower[pos]:
+                    candidate = word_lower[:pos] + letter + word_lower[pos+1:]
+                    if spell.known([candidate]) and len(candidate) >= len(word_lower):
+                        # Check frequency
+                        if spell.word_frequency[candidate] > 1e-6:
+                            candidates.append(candidate)
+        
+        # If we found valid COMMON candidates, prefer those that are longer
+        if candidates:
+            # Sort by frequency (more common first), then by length
+            candidates.sort(key=lambda x: (spell.word_frequency[x], len(x)), reverse=True)
+            result = candidates[0].upper()
+            if result != word.upper():
+                logger.info(f"Spelling corrected: {word.upper()} -> {result}")
+            return result
+        
+        # No common word found, return original
         return word.upper()
